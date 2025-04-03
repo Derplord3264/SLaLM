@@ -89,7 +89,7 @@ def train():
         print("🚀 Starting fresh training session\n")
 
     # Training loop with progress tracking
-    for epoch in range(start_epoch, 5):
+    for epoch in range(start_epoch, 200):
         epoch_start = time.time()
         model.train()
         total_loss = 0.0
