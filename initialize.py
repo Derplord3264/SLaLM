@@ -1,42 +1,44 @@
-import torch
 import os
+import json
 from collections import Counter
 
 def preprocess_data():
-    # Verify data file exists
-    if not os.path.exists("data/formatted_movie_lines.txt"):
-        raise FileNotFoundError("Please download and place formatted_movie_lines.txt in data/ directory")
-    
-    # Load and parse data
-    with open("data/formatted_movie_lines.txt", "r", encoding="utf-8", errors="ignore") as f:
+    # Load and validate data
+    data_path = "data/formatted_movie_lines.txt"
+    if not os.path.exists(data_path):
+        raise FileNotFoundError(f"Missing data file: {data_path}")
+
+    with open(data_path, "r", encoding="utf-8", errors="ignore") as f:
         lines = [line.strip().split(" +++$+++ ")[-1] for line in f if line.strip()]
-    
-    # Create context-response pairs with sliding window
+
+    # Create context-response pairs with validation
     pairs = []
     for i in range(len(lines)-1):
-        context = lines[i]
-        response = lines[i+1]
-        pairs.append((context, response))
-    
-    # Build vocabulary with special tokens
+        if len(lines[i]) > 1 and len(lines[i+1]) > 1:  # Skip empty lines
+            pairs.append((lines[i], lines[i+1]))
+
+    # Build vocabulary with frequency threshold
     word_counts = Counter()
-    special_tokens = ["<pad>", "<unk>", "<start>", "<end>"]
-    
     for context, response in pairs:
         for sentence in [context, response]:
             word_counts.update(sentence.lower().split())
-    
-    # Filter rare words and create mappings
-    vocab = special_tokens + [word for word, count in word_counts.items() if count >= 3]
+
+    vocab = ["<pad>", "<unk>", "<start>", "<end>"] + \
+            [word for word, count in word_counts.items() if count >= 3]
     word2idx = {word: idx for idx, word in enumerate(vocab)}
-    
-    # Create output directory if needed
+
+    # Save with proper serialization
     os.makedirs("data", exist_ok=True)
     
-    # Save processed data
-    torch.save(pairs, "data/processed_pairs.pt")
-    torch.save(word2idx, "data/word2idx.pt")
-    print(f"Preprocessed {len(pairs)} dialogue pairs. Vocabulary size: {len(vocab)}")
+    # Save pairs as JSON
+    with open("data/processed_pairs.json", "w") as f:
+        json.dump(pairs, f)
+    
+    # Save vocabulary as JSON
+    with open("data/word2idx.json", "w") as f:
+        json.dump(word2idx, f)
+    
+    print(f"Preprocessed {len(pairs)} pairs. Vocabulary size: {len(vocab)}")
 
 if __name__ == "__main__":
     preprocess_data()
