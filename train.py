@@ -8,43 +8,51 @@ import shutil
 class DialogueSNN(nn.Module):
     def __init__(self, vocab_size, hidden_size=128):
         super().__init__()
-        self.time_steps = 20  # Temporal resolution
+        self.time_steps = 20  # Temporal processing window
+        self.max_seq_len = 15  # Maximum sequence length to process
         self.hidden_size = hidden_size
         
-        # Embedding layer converts words to spike inputs
         self.embed = nn.Embedding(vocab_size, 64)
         
-        # Spiking neural network components
+        # Spiking layers with recurrence
         self.lif1 = snn.Leaky(beta=0.95, spike_grad=surrogate.atan())
         self.lif2 = snn.Leaky(beta=0.95, spike_grad=surrogate.atan())
         
-        # Recurrent connections
         self.fc1 = nn.Linear(64, hidden_size)
         self.fc2 = nn.Linear(hidden_size, vocab_size)
         
-        # Membrane potential memory
+        # Membrane potential states
         self.mem1 = None
         self.mem2 = None
-    
+
     def forward(self, x):
+        # x shape: [batch_size, seq_len]
+        batch_size, seq_len = x.shape
+        
         # Initialize membrane potentials
-        if self.mem1 is None:
-            self.mem1 = self.lif1.init_leaky()
-        if self.mem2 is None:
-            self.mem2 = self.lif2.init_leaky()
+        self.mem1 = self.lif1.init_leaky()
+        self.mem2 = self.lif2.init_leaky()
         
-        # Temporal processing loop
-        for _ in range(self.time_steps):
-            x_embedded = self.embed(x)
-            cur1 = self.fc1(x_embedded.mean(dim=1))
-            spk1, self.mem1 = self.lif1(cur1, self.mem1)
-            cur2 = self.fc2(spk1)
-            spk2, self.mem2 = self.lif2(cur2, self.mem2)
+        # Process entire sequence through temporal window
+        outputs = []
+        for t in range(seq_len):
+            x_t = x[:, t]  # Current timestep input
+            x_embedded = self.embed(x_t)  # [batch_size, embedding_dim]
+            
+            # Spiking neural processing
+            for _ in range(self.time_steps):
+                cur1 = self.fc1(x_embedded)
+                spk1, self.mem1 = self.lif1(cur1, self.mem1)
+                cur2 = self.fc2(spk1)
+                spk2, self.mem2 = self.lif2(cur2, self.mem2)
+            
+            outputs.append(spk2)
         
-        return torch.softmax(self.mem2, dim=-1)
+        # [seq_len, batch_size, vocab_size] -> [batch_size, seq_len, vocab_size]
+        return torch.stack(outputs).permute(1, 0, 2)
 
 def safe_save(state, filename):
-    # Atomic save to prevent corruption
+    """Atomic checkpoint save to prevent corruption"""
     temp_file = f"{filename}.tmp"
     torch.save(state, temp_file)
     shutil.move(temp_file, filename)
@@ -75,30 +83,37 @@ def train():
         model.train()
         total_loss = 0.0
         
-        for i, (context, response) in enumerate(pairs[:1000]):  # Use subset for demo
-            # Encode sentences
-            context_encoded = [word2idx["<start>"]] + \
-                [word2idx.get(word.lower(), word2idx["<unk>"]) for word in context.split()] + \
-                [word2idx["<end>"]]
+        for context, response in pairs[:500]:  # Use first 500 pairs for stability
+            # Encode sequences with padding/trimming
+            def process_seq(text, max_len=15):
+                tokens = [word2idx["<start>"]] + \
+                        [word2idx.get(w.lower(), word2idx["<unk>"]) 
+                        for w in text.split()][:max_len-1]
+                tokens += [word2idx["<pad>"]] * (max_len - len(tokens))
+                return torch.tensor(tokens[:max_len], len(tokens)
             
-            response_encoded = [word2idx["<start>"]] + \
-                [word2idx.get(word.lower(), word2idx["<unk>"]) for word in response.split()] + \
-                [word2idx["<end>"]]
+            ctx_tensor, ctx_len = process_seq(context)
+            resp_tensor, resp_len = process_seq(response)
             
-            # Convert to tensors
-            ctx_tensor = torch.tensor(context_encoded, dtype=torch.long, device=device)
-            resp_tensor = torch.tensor(response_encoded, dtype=torch.long, device=device)
+            # Move to device
+            ctx_tensor = ctx_tensor.to(device)
+            resp_tensor = resp_tensor.to(device)
             
-            # Training step
+            # Forward pass
             optimizer.zero_grad()
-            output = model(ctx_tensor.unsqueeze(0))
-            loss = criterion(output, resp_tensor)
+            outputs = model(ctx_tensor.unsqueeze(0))  # [1, seq_len, vocab_size]
+            
+            # Calculate loss for each sequence position
+            loss = 0
+            for t in range(resp_len):
+                loss += criterion(outputs[:, t, :], resp_tensor[t].unsqueeze(0))
+            
+            # Backpropagate and update
             loss.backward()
             optimizer.step()
-            
             total_loss += loss.item()
         
-        # Save checkpoint safely
+        # Save checkpoint
         safe_save({
             "epoch": epoch,
             "model": model.state_dict(),
