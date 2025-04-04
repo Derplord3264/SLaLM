@@ -2,8 +2,6 @@
 
 An experimental conversational AI agent built using **Spiking Neural Networks (SNNs)** with the **`snntorch`** library. This project explores the feasibility of using bio-inspired SNNs for natural language processing tasks, specifically dialogue generation.
 
-**Developed by a high school freshman as an ambitious exploration for a science fair project.**
-
 ## Features
 
 *   **Data Preprocessing:** Parses the Cornell Movie Dialogues Corpus into context-response pairs (`initialize.py`).
