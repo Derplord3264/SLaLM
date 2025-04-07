@@ -16,7 +16,7 @@ class DialogueSNN(nn.Module):
         self.time_steps = 20
         self.hidden_size = hidden_size
         
-        # Enhanced network architecture
+        # Network architecture
         self.embed = nn.Embedding(vocab_size, embed_size)
         self.fc1 = nn.Linear(embed_size, hidden_size)
         self.lif1 = snn.Leaky(beta=0.85, spike_grad=surrogate.atan())
@@ -33,11 +33,11 @@ class DialogueSNN(nn.Module):
         self.stdp_interval = 3
         self.stdp_decay = 0.95
 
-        # Hybrid learning balance
+        # Learning balance
         self.bp_scale = 0.7
         self.stdp_scale = 0.3
 
-        # Spike recording buffers
+        # Spike recording
         self.spike_records = {
             'fc1': [],
             'fc2': [],
@@ -50,9 +50,9 @@ class DialogueSNN(nn.Module):
         mem2 = self.lif2.init_leaky() if mem2 is None else mem2
         mem3 = self.lif3.init_leaky() if mem3 is None else mem3
         
-        # Reset spike records
+        # Reset records
         self.spike_records = {k: [] for k in self.spike_records}
-        stdp_updates = {}
+        stdp_updates = {'fc1': None, 'fc2': None, 'fc3': None}
 
         outputs = []
         for t in range(seq_len):
@@ -79,21 +79,23 @@ class DialogueSNN(nn.Module):
                 # STDP calculations
                 if step % self.stdp_interval == 0:
                     with torch.no_grad():
-                        # Calculate STDP updates
+                        # Layer 1 update
                         pre_act = x_embedded.mean(0)
                         post_act = spk1.mean(0)
                         delta_fc1 = torch.outer(self.a_post * post_act, self.a_pre * pre_act)
 
+                        # Layer 2 update
                         pre_act = spk1.mean(0)
                         post_act = spk2.mean(0)
                         delta_fc2 = torch.outer(self.a_post * post_act, self.a_pre * pre_act)
 
+                        # Layer 3 update
                         pre_act = spk2.mean(0)
                         post_act = spk3.mean(0)
                         delta_fc3 = torch.outer(self.a_post * post_act, self.a_pre * pre_act)
 
                         # Accumulate updates
-                        if 'fc1' not in stdp_updates:
+                        if stdp_updates['fc1'] is None:
                             stdp_updates['fc1'] = delta_fc1
                             stdp_updates['fc2'] = delta_fc2
                             stdp_updates['fc3'] = delta_fc3
@@ -106,7 +108,7 @@ class DialogueSNN(nn.Module):
             pooled_output = torch.stack(temporal_outputs).mean(dim=0)
             outputs.append(self.fc_out(pooled_output))
 
-        # Convert spike records
+        # Prepare spike data
         spike_data = {
             layer: torch.stack(self.spike_records[layer]).squeeze().cpu()
             for layer in self.spike_records
@@ -115,13 +117,13 @@ class DialogueSNN(nn.Module):
         return torch.stack(outputs).permute(1, 0, 2), mem1, mem2, mem3, stdp_updates, spike_data
 
 def safe_save(state, filename):
-    """Atomic model saving"""
+    """Atomic model save"""
     temp_file = f"{filename}.tmp"
     torch.save(state, temp_file)
     shutil.move(temp_file, filename)
 
 def process_seq(text, word2idx, max_len=15, add_end=False):
-    """Process text sequence with safety checks"""
+    """Process text sequence"""
     tokens = [word2idx["<start>"]]
     valid_tokens = [word2idx.get(w.lower(), word2idx["<unk>"]) 
                    for w in text.split()[:max_len - (2 if add_end else 1)]]
@@ -148,8 +150,8 @@ def train():
     scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, 'min', patience=3)
     criterion = nn.CrossEntropyLoss(ignore_index=word2idx["<pad>"])
 
-    # Training configuration
-    vis_frequency = 50  # Visualize every 50 batches
+    # Training config
+    vis_frequency = 50
     best_loss = float('inf')
     start_epoch = 0
 
@@ -176,7 +178,7 @@ def train():
         )
 
         for batch_idx, (context, response) in enumerate(progress):
-            # Process sequences
+            # Prepare sequences
             ctx_tensor, _ = process_seq(context, word2idx)
             resp_tensor, _ = process_seq(response, word2idx, add_end=True)
             ctx_tensor = ctx_tensor.to(device).unsqueeze(0)
@@ -195,16 +197,16 @@ def train():
             # Backpropagation
             loss.backward()
             
-            # Apply STDP updates
+            # Apply STDP updates only to fc1-3
             with torch.no_grad():
                 for name, param in model.named_parameters():
-                    if 'fc' in name and 'weight' in name:
+                    if name in ['fc1.weight', 'fc2.weight', 'fc3.weight']:
                         layer = name.split('.')[0]
                         stdp_grad = stdp_updates[layer].to(device)
                         param.grad = (model.bp_scale * param.grad +
                                       model.stdp_scale * stdp_grad)
             
-            # Optimization step
+            # Optimizer step
             nn.utils.clip_grad_norm_(model.parameters(), 1.0)
             optimizer.step()
             
@@ -215,7 +217,7 @@ def train():
                 "lr": f"{optimizer.param_groups[0]['lr']:.4f}"
             })
 
-            # Generate visualizations
+            # Visualization
             if batch_idx % vis_frequency == 0 and batch_idx < 5:
                 plot_path = plot_spike_raster(
                     spike_data,
@@ -225,7 +227,7 @@ def train():
                 )
                 progress.write(f"Saved spike plot: {plot_path}")
 
-        # Epoch post-processing
+        # Epoch cleanup
         avg_loss = epoch_loss / len(progress)
         scheduler.step(avg_loss)
         
