@@ -215,10 +215,10 @@ def train():
             optimizer.zero_grad()
             outputs, mem1, mem2, mem3, stdp_updates, spike_data = model(ctx_batch)
             
-            # Calculate loss
+            # Calculate loss (FIXED TENSOR RESHAPING)
             loss = criterion(
-                outputs.view(-1, outputs.size(-1)),
-                resp_batch.view(-1)
+                outputs.reshape(-1, outputs.size(-1)),  # Changed view->reshape
+                resp_batch.reshape(-1)                  # Changed view->reshape
             )
             
             # Backpropagation
