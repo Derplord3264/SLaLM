@@ -1,119 +1,129 @@
-# SLaLM
+# 🧠💬 Conversational Spiking Neural Network (SNN)
 
-An experimental conversational AI agent built using **Spiking Neural Networks (SNNs)** with the **`snntorch`** library. This project explores the feasibility of using bio-inspired SNNs for natural language processing tasks, specifically dialogue generation.
+**A biologically-inspired chatbot implementing spike-based learning with STDP and temporal pooling.**
 
-## Features
+[![Python 3.8+](https://img.shields.io/badge/python-3.8+-blue.svg)](https://www.python.org/downloads/)
 
-*   **Data Preprocessing:** Parses the Cornell Movie Dialogues Corpus into context-response pairs (`initialize.py`).
-*   **SNN Model:** Implements a sequence-to-sequence like architecture using `snntorch` layers (`snn.Leaky`, `snn.Synaptic`) combined with standard PyTorch embeddings and linear layers (`train.py`).
-*   **Surrogate Gradient Training:** Uses backpropagation with surrogate gradients (`snntorch.surrogate`) to train the SNN.
-*   **Experimental STDP:** Includes an optional, experimental implementation of Spike-Timing-Dependent Plasticity (STDP) that can be applied *alongside* backpropagation (`--use_stdp` flag in `train.py`).
-*   **Interactive Chat:** Allows real-time interaction with the trained SNN model (`chat.py`).
-*   **Verbose Logging & Configuration:** Scripts include detailed logging and command-line arguments for configuration.
+<br>
 
-## Motivation & Novelty
+## ✨ Key Features
 
-Traditional chatbots often rely on large RNNs or Transformers. This project investigates the potential of SNNs, which offer theoretical advantages in energy efficiency and biological plausibility, for the complex task of dialogue generation.
+*   **Spike-Timing Dependent Plasticity (STDP):**  Local temporal learning through spike correlation.
+*   **Temporal Pooling:** Time-step aggregation for enhanced temporal processing.
+*   **Hybrid Learning:** Combines STDP with backpropagation for stable training.
+*   **Spike Visualization:** Interactive raster plots of layer-wise activity.
+*   **Movie Dialogue Training:** Pre-trained on a movie conversation dataset.
 
-Key explorations include:
-1.  Implementing a text-generating SNN using `snntorch`.
-2.  Combining standard backpropagation with biologically-inspired STDP learning rules in a hybrid approach.
-3.  Demonstrating the capabilities and challenges of current SNNs for NLP tasks at a level suitable for science fair investigation.
+<br>
 
-The implementation of a functional SNN chatbot attempting text generation, especially with STDP exploration, by a high school freshman is believed to be a novel undertaking.
+## 🏛️ Architecture
 
-## Project Structure
+```mermaid
+graph LR
+A[Input] --> B(Embedding)
+B --> C[LIF Layer 1]
+C --> D[LIF Layer 2]
+D --> E[LIF Layer 3]
+E --> F[Temporal Pooling]
+F --> G[Output]
+style C fill:#ff7f0e,stroke:#333
+style D fill:#2ca02c,stroke:#333
+style E fill:#d62728,stroke:#333
+```
 
-*   `initialize.py`: Script to download (if needed) and preprocess the Cornell Movie Dialogues dataset. Creates vocabulary and conversation pairs.
-*   `train.py`: Defines the `SpikeDialogueModel` (SNN architecture) and contains the main training loop, including validation, checkpointing, surrogate gradient backpropagation, and the optional STDP updates.
-*   `chat.py`: Provides an interactive command-line interface to load a trained checkpoint and chat with the SNN bot.
-*   `data/`: (Needs to be created) Directory intended to hold the raw dataset (e.g., `movie_lines.txt`).
-*   `processed/`: (Created by `initialize.py`) Directory holding the processed vocabulary (`word2idx.pt`) and conversation pairs (`processed_pairs.json`).
-*   `checkpoints/`: (Created by `train.py`) Directory where model checkpoints are saved during training.
+<br>
 
-## Setup
+## 🚀 Quick Start
 
-1.  **Clone the repository:**
-    ```bash
-    git clone <your-repo-url>
-    cd <your-repo-name>
-    ```
+### 📦 Installation
 
-2.  **Create a virtual environment (recommended):**
-    ```bash
-    python -m venv venv
-    source venv/bin/activate  # On Windows use `venv\Scripts\activate`
-    ```
+```bash
+git clone https://github.com/yourusername/conversational-snn.git
+cd conversational-snn
+pip install -r requirements.txt
+```
 
-3.  **Install dependencies:**
-    *(You need to create a `requirements.txt` file!)*
-    ```bash
-    pip install torch snntorch tqdm numpy # Add any other libraries you used
-    # Create requirements.txt: pip freeze > requirements.txt
-    pip install -r requirements.txt
-    ```
+### ⚙️ Requirements
 
-## Usage
+*   Python 3.8+
+*   `snntorch>=0.6`
+*   `torch>=1.12`
+*   `matplotlib>=3.5`
+*   `tqdm>=4.64`
+
+<br>
+
+### 🕹️ Usage
 
 1.  **Preprocess Data:**
+
+    Place your `movie_lines.txt` in the `data/` directory and run:
+
     ```bash
     python initialize.py
     ```
-    This will create the `processed/` directory with `word2idx.pt` and `processed_pairs.json`.
 
-2.  **Train the Model:**
+2.  **Train Model:**
+
+    Start training with hybrid STDP-backprop:
+
     ```bash
-    # Basic training
-    python train.py --epochs 20 --train_size 10000 --val_size 2000
-
-    # Training with STDP enabled
-    python train.py --epochs 20 --train_size 10000 --val_size 2000 --use_stdp
-
-    # See available options
-    python train.py --help
+    python train.py
     ```
-    Checkpoints will be saved in the `checkpoints/` directory.
+    Visualizations will be saved to the `visualizations/` directory.
 
-3.  **Chat with the Bot:**
-    *   Find the path to a saved checkpoint (e.g., `checkpoints/checkpoint_epoch_10.pt`).
+3.  **Chat with Model:**
+
+    Launch the interactive chatbot:
+
     ```bash
-    python chat.py --model checkpoints/your_checkpoint_file.pt --temp 0.8 --top_k 50
+    python chat.py
     ```
-    *   Type your message and press Enter.
-    *   Use `reset` to clear the SNN state (useful if generation becomes strange).
-    *   Use `exit` to quit.
 
-## Model Details
+<br>
 
-*   **Dataset:** Cornell Movie Dialogues Corpus
-*   **Architecture:**
-    *   `nn.Embedding`
-    *   `nn.Linear` projection
-    *   `snn.Leaky` (Leaky Integrate-and-Fire neuron layer)
-    *   `nn.Linear` projection
-    *   `snn.Synaptic` (Leaky Integrate-and-Fire neuron with synaptic current dynamics)
-*   **Training:** AdamW optimizer, CrossEntropyLoss (on spike outputs via surrogate gradients), ReduceLROnPlateau scheduler.
-*   **STDP (Optional):** Simple Hebbian-style update based on mean pre- and post-synaptic activity within a time window, applied to `fc1` weights.
+## 💡 Technical Highlights
 
-## Results & Analysis (Ongoing)
+### Network Architecture
 
-Currently under investigation. Planned analysis includes:
+```python
+class DialogueSNN(nn.Module):
+    def __init__(self, vocab_size, hidden_size=256):
+        super().__init__()
+        # 3-layer LIF architecture
+        self.embed = nn.Embedding(vocab_size, 128)
+        self.fc1 = nn.Linear(128, 256)
+        self.lif1 = snn.Leaky(beta=0.85)
+        # ... (additional layers)
+```
 
-*   Training/validation loss curves (with vs. without STDP).
-*   Average network spike rates during training.
-*   Qualitative examples of generated conversations.
-*   Comparison of generation quality (coherence, relevance) between models trained with and without STDP.
-*   Analysis of challenges encountered (e.g., training stability, vanishing/exploding spikes, impact of hyperparameters).
+### Hybrid Learning
 
-## Future Work
+```python
+# Combined STDP-backprop update
+param.grad = (0.7 * backprop_grad + 0.3 * stdp_grad)
+```
 
-*   Implement more sophisticated, time-dependent STDP rules.
-*   Explore different SNN neuron models and network architectures (e.g., recurrent SNN layers).
-*   Investigate methods for maintaining conversational context (state) across multiple turns using SNN states.
-*   Train on larger datasets and for more epochs.
-*   Perform quantitative analysis of computational cost / potential energy efficiency compared to traditional ANNs (though this is challenging without specialized hardware).
-*   Improve the STDP update mechanism and target synapse selection.
+### Visualization Example
 
-## Contributing
+**Spike Raster Plot**  _ (Include an actual spike raster plot image here.  Find one generated by your code and upload it to the repository, then link it here)_
 
-Contributions, issues, and feature requests are welcome! Please open an issue first to discuss what you would like to change.
+![Spike Raster Plot Example](link/to/spike_raster_plot.png)  _Replace `link/to/spike_raster_plot.png` with the correct path_
+
+<br>
+
+## 🙌 Contributing
+
+Pull requests are welcome! Key development areas include:
+
+*   Improved STDP rules
+*   Attention mechanisms
+*   Larger pretrained models
+
+<br>
+
+## 📜 License
+
+Copyright (c) 2025 Grant Arrington
+All Rights Reserved.
+See [LICENSE](LICENSE) for details.
