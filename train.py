@@ -79,17 +79,15 @@ class DialogueSNN(nn.Module):
                 # STDP calculations
                 if step % self.stdp_interval == 0:
                     with torch.no_grad():
-                        # Layer 1 update
+                        # Layer updates
                         pre_act = x_embedded.mean(0)
                         post_act = spk1.mean(0)
                         delta_fc1 = torch.outer(self.a_post * post_act, self.a_pre * pre_act)
 
-                        # Layer 2 update
                         pre_act = spk1.mean(0)
                         post_act = spk2.mean(0)
                         delta_fc2 = torch.outer(self.a_post * post_act, self.a_pre * pre_act)
 
-                        # Layer 3 update
                         pre_act = spk2.mean(0)
                         post_act = spk3.mean(0)
                         delta_fc3 = torch.outer(self.a_post * post_act, self.a_pre * pre_act)
@@ -122,18 +120,21 @@ def safe_save(state, filename):
     torch.save(state, temp_file)
     shutil.move(temp_file, filename)
 
-def process_seq(text, word2idx, max_len=15, add_end=False):
-    """Process text sequence"""
+def process_seq(text, word2idx, max_len=25, add_end=False):
+    """Process text sequence with dynamic length handling"""
     tokens = [word2idx["<start>"]]
-    valid_tokens = [word2idx.get(w.lower(), word2idx["<unk>"]) 
-                   for w in text.split()[:max_len - (2 if add_end else 1)]]
-    tokens += [t for t in valid_tokens if t != word2idx["<unk>"]]
+    tokens += [word2idx.get(w.lower(), word2idx["<unk>"]) 
+              for w in text.split()[:max_len - (2 if add_end else 1)]]
     
     if add_end:
         tokens.append(word2idx["<end>"])
     
-    padding = [word2idx["<pad>"]] * (max_len - len(tokens))
-    return torch.tensor(tokens + padding[:max_len]), len(tokens)
+    return torch.tensor(tokens), len(tokens)
+
+def batchify(pairs, batch_size):
+    """Create mini-batches from pairs"""
+    return [pairs[i:i+batch_size] 
+           for i in range(0, len(pairs), batch_size)]
 
 def train():
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -144,18 +145,20 @@ def train():
     with open("data/processed_pairs.json", "r") as f:
         pairs = json.load(f)
 
+    # Training config
+    batch_size = 32
+    vis_frequency = 10
+    max_seq_length = 25
+
     # Initialize model
     model = DialogueSNN(len(word2idx)).to(device)
     optimizer = optim.AdamW(model.parameters(), lr=2e-4, weight_decay=1e-5)
     scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, 'min', patience=3)
     criterion = nn.CrossEntropyLoss(ignore_index=word2idx["<pad>"])
 
-    # Training config
-    vis_frequency = 50
-    best_loss = float('inf')
-    start_epoch = 0
-
     # Resume training
+    start_epoch = 0
+    best_loss = float('inf')
     if os.path.exists("checkpoint.pt"):
         checkpoint = torch.load("checkpoint.pt", map_location=device)
         model.load_state_dict(checkpoint['model'])
@@ -170,43 +173,68 @@ def train():
         epoch_loss = 0
         start_time = time.time()
         
+        # Create batches
+        batches = batchify(pairs[:5000], batch_size)
         progress = tqdm(
-            pairs[:5000],
+            batches,
             desc=f"Epoch {epoch+1:03d}",
             bar_format="{l_bar}{bar:20}{r_bar}",
             postfix={"loss": "N/A"}
         )
 
-        for batch_idx, (context, response) in enumerate(progress):
+        for batch_idx, batch in enumerate(progress):
+            # Process batch
+            contexts, responses = zip(*batch)
+            
             # Prepare sequences
-            ctx_tensor, _ = process_seq(context, word2idx)
-            resp_tensor, _ = process_seq(response, word2idx, add_end=True)
-            ctx_tensor = ctx_tensor.to(device).unsqueeze(0)
-            resp_tensor = resp_tensor.to(device)
+            ctx_tensors, resp_tensors = [], []
+            ctx_lengths, resp_lengths = [], []
+            
+            for context, response in zip(contexts, responses):
+                ctx_tensor, ctx_len = process_seq(context, word2idx, max_seq_length)
+                resp_tensor, resp_len = process_seq(response, word2idx, max_seq_length, True)
+                ctx_tensors.append(ctx_tensor)
+                resp_tensors.append(resp_tensor)
+                ctx_lengths.append(ctx_len)
+                resp_lengths.append(resp_len)
+
+            # Pad sequences
+            ctx_batch = torch.nn.utils.rnn.pad_sequence(
+                ctx_tensors, 
+                batch_first=True, 
+                padding_value=word2idx["<pad>"]
+            ).to(device)
+            
+            resp_batch = torch.nn.utils.rnn.pad_sequence(
+                resp_tensors,
+                batch_first=True,
+                padding_value=word2idx["<pad>"]
+            ).to(device)
 
             # Forward pass
             optimizer.zero_grad()
-            outputs, mem1, mem2, mem3, stdp_updates, spike_data = model(ctx_tensor)
+            outputs, mem1, mem2, mem3, stdp_updates, spike_data = model(ctx_batch)
             
             # Calculate loss
             loss = criterion(
                 outputs.view(-1, outputs.size(-1)),
-                resp_tensor.view(-1)
+                resp_batch.view(-1)
             )
             
             # Backpropagation
             loss.backward()
             
-            # Apply STDP updates only to fc1-3
+            # Apply STDP updates
             with torch.no_grad():
                 for name, param in model.named_parameters():
                     if name in ['fc1.weight', 'fc2.weight', 'fc3.weight']:
                         layer = name.split('.')[0]
-                        stdp_grad = stdp_updates[layer].to(device)
-                        param.grad = (model.bp_scale * param.grad +
-                                      model.stdp_scale * stdp_grad)
+                        if stdp_updates[layer] is not None:
+                            stdp_grad = stdp_updates[layer].to(device)
+                            param.grad = (model.bp_scale * param.grad +
+                                         model.stdp_scale * stdp_grad)
             
-            # Optimizer step
+            # Optimization step
             nn.utils.clip_grad_norm_(model.parameters(), 1.0)
             optimizer.step()
             
@@ -218,7 +246,7 @@ def train():
             })
 
             # Visualization
-            if batch_idx % vis_frequency == 0 and batch_idx < 5:
+            if batch_idx % vis_frequency == 0:
                 plot_path = plot_spike_raster(
                     spike_data,
                     epoch=epoch+1,
