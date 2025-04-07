@@ -16,7 +16,6 @@ class DialogueSNN(nn.Module):
         self.time_steps = 20
         self.hidden_size = hidden_size
         
-        # Network architecture
         self.embed = nn.Embedding(vocab_size, embed_size)
         self.fc1 = nn.Linear(embed_size, hidden_size)
         self.lif1 = snn.Leaky(beta=0.85, spike_grad=surrogate.atan())
@@ -50,7 +49,6 @@ class DialogueSNN(nn.Module):
         mem2 = self.lif2.init_leaky() if mem2 is None else mem2
         mem3 = self.lif3.init_leaky() if mem3 is None else mem3
         
-        # Reset records
         self.spike_records = {k: [] for k in self.spike_records}
         stdp_updates = {'fc1': None, 'fc2': None, 'fc3': None}
 
@@ -79,15 +77,17 @@ class DialogueSNN(nn.Module):
                 # STDP calculations
                 if step % self.stdp_interval == 0:
                     with torch.no_grad():
-                        # Layer updates
+                        # Layer 1 update
                         pre_act = x_embedded.mean(0)
                         post_act = spk1.mean(0)
                         delta_fc1 = torch.outer(self.a_post * post_act, self.a_pre * pre_act)
 
+                        # Layer 2 update
                         pre_act = spk1.mean(0)
                         post_act = spk2.mean(0)
                         delta_fc2 = torch.outer(self.a_post * post_act, self.a_pre * pre_act)
 
+                        # Layer 3 update
                         pre_act = spk2.mean(0)
                         post_act = spk3.mean(0)
                         delta_fc3 = torch.outer(self.a_post * post_act, self.a_pre * pre_act)
@@ -121,15 +121,27 @@ def safe_save(state, filename):
     shutil.move(temp_file, filename)
 
 def process_seq(text, word2idx, max_len=25, add_end=False):
-    """Process text sequence with dynamic length handling"""
+    """Process text sequence with fixed length handling"""
     tokens = [word2idx["<start>"]]
-    tokens += [word2idx.get(w.lower(), word2idx["<unk>"]) 
-              for w in text.split()[:max_len - (2 if add_end else 1)]]
     
+    # Calculate available space
+    max_text_tokens = max_len - 1  # Reserve for <start>
+    if add_end:
+        max_text_tokens -= 1  # Reserve for <end>
+    
+    # Add text tokens
+    tokens += [word2idx.get(w.lower(), word2idx["<unk>"]) 
+              for w in text.split()[:max_text_tokens]]
+    
+    # Add end token if needed
     if add_end:
         tokens.append(word2idx["<end>"])
     
-    return torch.tensor(tokens), len(tokens)
+    # Pad to exact max_len
+    pad_needed = max_len - len(tokens)
+    tokens += [word2idx["<pad>"]] * pad_needed
+    
+    return torch.tensor(tokens[:max_len]), len(tokens) - pad_needed
 
 def batchify(pairs, batch_size):
     """Create mini-batches from pairs"""
@@ -147,8 +159,8 @@ def train():
 
     # Training config
     batch_size = 32
-    vis_frequency = 10
     max_seq_length = 25
+    vis_frequency = 10
 
     # Initialize model
     model = DialogueSNN(len(word2idx)).to(device)
@@ -173,7 +185,6 @@ def train():
         epoch_loss = 0
         start_time = time.time()
         
-        # Create batches
         batches = batchify(pairs[:5000], batch_size)
         progress = tqdm(
             batches,
@@ -186,39 +197,27 @@ def train():
             # Process batch
             contexts, responses = zip(*batch)
             
-            # Prepare sequences
-            ctx_tensors, resp_tensors = [], []
-            ctx_lengths, resp_lengths = [], []
-            
+            # Prepare sequences with fixed length
+            ctx_tensors = []
+            resp_tensors = []
             for context, response in zip(contexts, responses):
-                ctx_tensor, ctx_len = process_seq(context, word2idx, max_seq_length)
-                resp_tensor, resp_len = process_seq(response, word2idx, max_seq_length, True)
+                ctx_tensor, _ = process_seq(context, word2idx, max_seq_length)
+                resp_tensor, _ = process_seq(response, word2idx, max_seq_length, add_end=True)
                 ctx_tensors.append(ctx_tensor)
                 resp_tensors.append(resp_tensor)
-                ctx_lengths.append(ctx_len)
-                resp_lengths.append(resp_len)
 
-            # Pad sequences
-            ctx_batch = torch.nn.utils.rnn.pad_sequence(
-                ctx_tensors, 
-                batch_first=True, 
-                padding_value=word2idx["<pad>"]
-            ).to(device)
-            
-            resp_batch = torch.nn.utils.rnn.pad_sequence(
-                resp_tensors,
-                batch_first=True,
-                padding_value=word2idx["<pad>"]
-            ).to(device)
+            # Create batches
+            ctx_batch = torch.stack(ctx_tensors).to(device)
+            resp_batch = torch.stack(resp_tensors).to(device)
 
             # Forward pass
             optimizer.zero_grad()
             outputs, mem1, mem2, mem3, stdp_updates, spike_data = model(ctx_batch)
             
-            # Calculate loss (FIXED TENSOR RESHAPING)
+            # Loss calculation with dimension fix
             loss = criterion(
-                outputs.reshape(-1, outputs.size(-1)),  # Changed view->reshape
-                resp_batch.reshape(-1)                  # Changed view->reshape
+                outputs.reshape(-1, outputs.size(-1)),
+                resp_batch.reshape(-1)
             )
             
             # Backpropagation
