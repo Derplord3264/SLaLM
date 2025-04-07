@@ -1,4 +1,4 @@
-# 🧠💬 Conversational Spiking Neural Network (SNN)
+# SLaLM
 
 **A biologically-inspired chatbot implementing spike-based learning with STDP and temporal pooling.**
 
@@ -38,8 +38,8 @@ style E fill:#d62728,stroke:#333
 ### 📦 Installation
 
 ```bash
-git clone https://github.com/yourusername/conversational-snn.git
-cd conversational-snn
+git clone https://github.com/Derplord3264/SLaLM.git
+cd SLaLM
 pip install -r requirements.txt
 ```
 
@@ -57,7 +57,7 @@ pip install -r requirements.txt
 
 1.  **Preprocess Data:**
 
-    Place your `movie_lines.txt` in the `data/` directory and run:
+    Run:
 
     ```bash
     python initialize.py
